@@ -1,235 +1,339 @@
-<!doctype html>
-<html lang="en">
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="description" content="A simple, consent-based public IP information tool.">
-  <title>BATATA IP Detection</title>
-  <style>
-    :root {
-      color-scheme: light;
-      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-      color: #17202a;
-      background: #f2f5f8;
-    }
-    * { box-sizing: border-box; }
-    body {
-      min-height: 100vh;
-      margin: 0;
-      display: grid;
-      place-items: center;
-      padding: 24px;
-    }
-    .panel {
-      width: min(100%, 460px);
-      background: #fff;
-      border: 1px solid #e1e7ee;
-      border-radius: 18px;
-      box-shadow: 0 14px 40px rgb(20 35 55 / 10%);
-      overflow: hidden;
-    }
-    .header {
-      padding: 22px 24px;
-      background: #102a43;
-      color: #fff;
-    }
-    .header h1 { margin: 0; font-size: 1.25rem; }
-    .header p { margin: 7px 0 0; color: #d9e2ec; font-size: .92rem; }
-    .content { padding: 24px; }
-    .notice {
-      border: 1px solid #f0d58c;
-      background: #fff8df;
-      color: #674d00;
-      border-radius: 12px;
-      padding: 13px 14px;
-      line-height: 1.5;
-      font-size: .9rem;
-      margin-bottom: 18px;
-    }
-    .actions { display: flex; flex-wrap: wrap; gap: 10px; }
-    button {
-      border: 0;
-      border-radius: 10px;
-      padding: 12px 16px;
-      font: inherit;
-      font-weight: 650;
-      cursor: pointer;
-    }
-    button:focus-visible { outline: 3px solid #6bb8ff; outline-offset: 3px; }
-    button:disabled { opacity: .6; cursor: wait; }
-    .primary { background: #087f5b; color: #fff; flex: 1; }
-    .secondary { background: #e9eef4; color: #243b53; }
-    .result {
-      margin-top: 20px;
-      border: 1px solid #e1e7ee;
-      border-radius: 12px;
-      padding: 16px;
-      display: grid;
-      gap: 14px;
-    }
-    .result[hidden], .status[hidden] { display: none; }
-    .field-label { color: #627d98; font-size: .78rem; text-transform: uppercase; letter-spacing: .06em; }
-    .field-value { margin-top: 4px; font-weight: 650; overflow-wrap: anywhere; }
-    .copy { width: 100%; background: #e6fcf5; color: #087f5b; }
-    .status { margin: 14px 0 0; font-size: .92rem; line-height: 1.5; }
-    .status.error { color: #b42318; }
-    .status.success { color: #087f5b; }
-    footer { padding: 0 24px 22px; color: #627d98; font-size: .8rem; line-height: 1.5; }
-    a { color: inherit; }
-    @media (prefers-reduced-motion: no-preference) {
-      .panel { animation: appear .25s ease-out; }
-      @keyframes appear { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
-    }
-  </style>
-</head>
-<body>
-  <main class="panel" aria-labelledby="title">
-    <header class="header">
-      <h1 id="title">🌐 BATATA IP Detection</h1>
-      <p>Check your own public IP address and approximate network location.</p>
-    </header>
+(function() {
+    'use strict';
 
-    <section class="content">
-      <div class="notice" id="privacy-notice">
-        <strong>Privacy notice:</strong> When you choose to check your IP, this page sends a request to
-        <a href="https://ipapi.co/" target="_blank" rel="noopener noreferrer">ipapi.co</a>.
-        The service receives your connection's IP address and may return approximate location and network-provider details.
-        Your IP is not saved by this page.
-      </div>
+    // Configuration
+    const CONFIG = {
+        GEO_API_PROVIDERS: [
+            'https://ipapi.co/{ip}/json/',
+            'https://geolocation-db.com/json/{ip}',
+            'https://api.ip.sb/geoip/{ip}'
+        ],
+        UPDATE_INTERVAL: 3000,
+        MAX_RETRIES: 2,
+        PRIVACY_CONSENT_KEY: 'ipDetectorConsent'
+    };
 
-      <div class="actions">
-        <button class="primary" id="detect-btn" type="button">I understand — detect my IP</button>
-        <button class="secondary" id="clear-btn" type="button">Clear</button>
-      </div>
+    // Éléments globaux
+    let ipContainer, currentIpElement, isDragging = false;
 
-      <p class="status" id="status" role="status" aria-live="polite" hidden></p>
-
-      <section class="result" id="result" aria-label="IP information" hidden>
-        <div>
-          <div class="field-label">Public IP address</div>
-          <div class="field-value" id="ip-value">—</div>
-        </div>
-        <div>
-          <div class="field-label">Approximate city / region</div>
-          <div class="field-value" id="location-value">Not available</div>
-        </div>
-        <div>
-          <div class="field-label">Network provider</div>
-          <div class="field-value" id="isp-value">Not available</div>
-        </div>
-        <button class="copy" id="copy-btn" type="button">📋 Copy IP address</button>
-      </section>
-    </section>
-
-    <footer>
-      Location results are estimates based on IP data, not GPS or an exact street address.
-      The tool checks the IP of the connection used to access the API; VPNs and proxies can change the result.
-    </footer>
-  </main>
-
-  <script>
-    "use strict";
-
-    const detectButton = document.querySelector("#detect-btn");
-    const clearButton = document.querySelector("#clear-btn");
-    const copyButton = document.querySelector("#copy-btn");
-    const result = document.querySelector("#result");
-    const status = document.querySelector("#status");
-    const ipValue = document.querySelector("#ip-value");
-    const locationValue = document.querySelector("#location-value");
-    const ispValue = document.querySelector("#isp-value");
-
-    let currentIp = "";
-
-    function setStatus(message, kind = "") {
-      status.textContent = message;
-      status.className = `status ${kind}`.trim();
-      status.hidden = !message;
+    // Vérifier le consentement
+    if (!localStorage.getItem(CONFIG.PRIVACY_CONSENT_KEY)) {
+        showConsentModal();
+    } else {
+        initDetector();
     }
 
-    function resetResults() {
-      currentIp = "";
-      ipValue.textContent = "—";
-      locationValue.textContent = "Not available";
-      ispValue.textContent = "Not available";
-      result.hidden = true;
-      setStatus("");
+    function initDetector() {
+        createUI();
+        setupDrag();
+        patchWebRTC();
     }
 
-    async function detectIp() {
-      resetResults();
-      detectButton.disabled = true;
-      detectButton.textContent = "Checking…";
-      setStatus("Contacting ipapi.co…");
+    function createUI() {
+        ipContainer = document.createElement('div');
+        ipContainer.id = 'ip-detector';
+        ipContainer.style.cssText = `
+            position: fixed;
+            top: 20px;
+            right: 20px;
+            width: 380px;
+            background: rgba(255, 255, 255, 0.95);
+            border-radius: 16px;
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.1);
+            border: 1px solid rgba(0, 0, 0, 0.1);
+            padding: 20px;
+            z-index: 10000;
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            cursor: move;
+            backdrop-filter: blur(12px);
+        `;
 
-      try {
-        const response = await fetch("https://ipapi.co/json/", {
-          method: "GET",
-          headers: { "Accept": "application/json" },
-          cache: "no-store"
+        ipContainer.innerHTML = `
+            <header style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px;">
+                <h3 style="margin: 0; color: #1a1a1a; font-size: 18px;">🌐 BATATA IP Detection </h3>
+                <button id="close-btn" style="
+                    background: none;
+                    border: none;
+                    cursor: pointer;
+                    color: #666;
+                    font-size: 16px;
+                    padding: 8px;
+                ">×</button>
+            </header>
+            <div id="ip-content" style="position: relative;">
+                <div class="skeleton" style="
+                    height: 120px;
+                    background: rgba(0,0,0,0.05);
+                    border-radius: 12px;
+                    animation: pulse 1.5s infinite;
+                "></div>
+            </div>
+        `;
+
+        document.body.appendChild(ipContainer);
+
+        // Gestion de la fermeture
+        document.getElementById('close-btn').addEventListener('click', () => {
+            ipContainer.style.transform = 'translateY(20px) scale(0.95)';
+            ipContainer.style.opacity = '0';
+            setTimeout(() => ipContainer.remove(), 300);
+        });
+    }
+
+    async function updateIpDisplay(ipData) {
+        const contentDiv = document.getElementById('ip-content');
+        
+        // Supprimer l'ancienne entrée
+        if (currentIpElement) {
+            contentDiv.removeChild(currentIpElement);
+        }
+
+        // Créer le nouvel élément
+        currentIpElement = document.createElement('div');
+        currentIpElement.style.cssText = `
+            background: rgba(255, 255, 255, 0.8);
+            border-radius: 12px;
+            padding: 16px;
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.05);
+            transition: all 0.3s ease;
+        `;
+
+        currentIpElement.innerHTML = `
+            <div style="display: grid; grid-template-columns: repeat(2, 1fr); gap: 12px; margin-bottom: 16px;">
+                <div>
+                    <div style="font-size: 12px; color: #666; margin-bottom: 4px;">IP Publique</div>
+                    <div style="font-weight: 500; color: #1a1a1a;">${sanitizeHTML(ipData.ip)}</div>
+                </div>
+                <div>
+                    <div style="font-size: 12px; color: #666; margin-bottom: 4px;">Localisation</div>
+                    <div style="font-weight: 500; color: #1a1a1a;">${sanitizeHTML(ipData.city || 'Inconnue')}</div>
+                </div>
+            </div>
+            <button class="copy-btn" style="
+                width: 100%;
+                padding: 12px;
+                background: #1bd386;
+                color: white;
+                border: none;
+                border-radius: 8px;
+                cursor: pointer;
+                transition: background 0.2s;
+            ">
+                📋 Copier l'IP
+            </button>
+        `;
+
+        // Gestion de la copie
+        currentIpElement.querySelector('.copy-btn').addEventListener('click', async () => {
+            try {
+                await navigator.clipboard.writeText(ipData.ip);
+                showFeedback('✅ Copié !');
+            } catch {
+                showFeedback('❌ Erreur');
+            }
         });
 
-        if (!response.ok) {
-          throw new Error(`The IP service returned HTTP ${response.status}.`);
-        }
-
-        const data = await response.json();
-        if (data.error || typeof data.ip !== "string" || !data.ip.trim()) {
-          throw new Error(data.reason || "The service did not return an IP address.");
-        }
-
-        currentIp = data.ip.trim();
-        ipValue.textContent = currentIp;
-        const city = typeof data.city === "string" ? data.city.trim() : "";
-        const region = typeof data.region === "string" ? data.region.trim() : "";
-        const country = typeof data.country_name === "string" ? data.country_name.trim() : "";
-        locationValue.textContent = [city, region, country].filter(Boolean).join(", ") || "Not available";
-        ispValue.textContent = typeof data.org === "string" && data.org.trim()
-          ? data.org.trim()
-          : "Not available";
-
-        result.hidden = false;
-        setStatus("IP information loaded successfully.", "success");
-      } catch (error) {
-        setStatus(
-          `Could not retrieve IP information. Check your internet connection or try again later. ${error.message}`,
-          "error"
-        );
-      } finally {
-        detectButton.disabled = false;
-        detectButton.textContent = "Check again";
-      }
+        // Animation d'entrée
+        contentDiv.appendChild(currentIpElement);
+        animateEntry(currentIpElement);
     }
 
-    async function copyIp() {
-      if (!currentIp) return;
-      try {
-        await navigator.clipboard.writeText(currentIp);
-        setStatus("IP address copied to clipboard.", "success");
-      } catch {
-        // Clipboard API may be unavailable on insecure origins or unsupported browsers.
-        const temporaryInput = document.createElement("textarea");
-        temporaryInput.value = currentIp;
-        temporaryInput.setAttribute("readonly", "");
-        temporaryInput.style.position = "fixed";
-        temporaryInput.style.opacity = "0";
-        document.body.appendChild(temporaryInput);
-        temporaryInput.select();
-        const copied = document.execCommand("copy");
-        temporaryInput.remove();
-        setStatus(
-          copied ? "IP address copied to clipboard." : "Copy failed. Select and copy the IP address manually.",
-          copied ? "success" : "error"
-        );
-      }
+    function patchWebRTC() {
+        const OriginalRTCPeerConnection = window.RTCPeerConnection || window.webkitRTCPeerConnection;
+        
+        window.RTCPeerConnection = function(...args) {
+            const pc = new OriginalRTCPeerConnection(...args);
+
+            pc.addIceCandidate = new Proxy(pc.addIceCandidate, {
+                apply: async (target, thisArg, [candidate]) => {
+                    try {
+                        if (candidate.candidate.includes('srflx')) {
+                            const ip = candidate.candidate.split(' ')[4];
+                            handleNewIP(ip);
+                        }
+                    } catch (e) {}
+                    return target.apply(thisArg, [candidate]);
+                }
+            });
+
+            return pc;
+        };
     }
 
-    detectButton.addEventListener("click", detectIp);
-    clearButton.addEventListener("click", () => {
-      resetResults();
-      detectButton.textContent = "I understand — detect my IP";
-    });
-    copyButton.addEventListener("click", copyIp);
-  </script>
-</body>
-</html>
+    async function handleNewIP(ip) {
+        if (window.lastIP === ip) return;
+        window.lastIP = ip;
+
+        try {
+            const geoData = await fetchGeoData(ip);
+            updateIpDisplay({
+                ip: ip,
+                city: geoData.city || geoData.location || 'Non disponible',
+                isp: geoData.org || 'Inconnu'
+            });
+        } catch {
+            updateIpDisplay({
+                ip: ip,
+                city: 'Information non disponible',
+                isp: 'Fournisseur inconnu'
+            });
+        }
+    }
+
+    async function fetchGeoData(ip, retry = 0) {
+        try {
+            const provider = CONFIG.GEO_API_PROVIDERS[retry % CONFIG.GEO_API_PROVIDERS.length];
+            const response = await fetch(provider.replace('{ip}', ip));
+            
+            if (!response.ok) throw new Error();
+            return await response.json();
+        } catch {
+            if (retry < CONFIG.MAX_RETRIES) return fetchGeoData(ip, retry + 1);
+            throw new Error('All providers failed');
+        }
+    }
+
+    function setupDrag() {
+        let startX, startY, initialX, initialY;
+
+        ipContainer.addEventListener('mousedown', startDrag);
+        ipContainer.addEventListener('touchstart', (e) => {
+            e.preventDefault();
+            startDrag(e.touches[0]);
+        });
+
+        function startDrag(e) {
+            isDragging = true;
+            startX = e.clientX;
+            startY = e.clientY;
+            initialX = ipContainer.offsetLeft;
+            initialY = ipContainer.offsetTop;
+
+            document.addEventListener('mousemove', drag);
+            document.addEventListener('mouseup', stopDrag);
+            document.addEventListener('touchmove', touchDrag);
+            document.addEventListener('touchend', stopDrag);
+        }
+
+        function drag(e) {
+            if (!isDragging) return;
+            updatePosition(e.clientX, e.clientY);
+        }
+
+        function touchDrag(e) {
+            if (!isDragging) return;
+            updatePosition(e.touches[0].clientX, e.touches[0].clientY);
+        }
+
+        function updatePosition(x, y) {
+            ipContainer.style.left = `${initialX + (x - startX)}px`;
+            ipContainer.style.top = `${initialY + (y - startY)}px`;
+        }
+
+        function stopDrag() {
+            isDragging = false;
+            document.removeEventListener('mousemove', drag);
+            document.removeEventListener('touchmove', touchDrag);
+        }
+    }
+
+    function showConsentModal() {
+        const modal = document.createElement('div');
+        modal.style.cssText = `
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: rgba(0,0,0,0.5);
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            z-index: 99999;
+        `;
+
+        modal.innerHTML = `
+            <div style="
+                background: white;
+                padding: 24px;
+                border-radius: 16px;
+                max-width: 500px;
+                text-align: center;
+            ">
+                <h3 style="margin: 0 0 16px 0;">Consentement de Confidentialité</h3>
+                <p style="color: #666; line-height: 1.5;">
+                    Cette fonctionnalité nécessite de détecter votre adresse IP publique pour fonctionner.
+                    Aucune donnée personnelle n'est stockée. Souhaitez-vous activer cette fonctionnalité ?
+                </p>
+                <div style="margin-top: 24px; display: flex; gap: 12px; justify-content: center;">
+                    <button id="accept-btn" style="
+                        padding: 12px 24px;
+                        background: #4A90E2;
+                        color: white;
+                        border: none;
+                        border-radius: 8px;
+                        cursor: pointer;
+                    ">
+                        Accepter
+                    </button>
+                    <button id="deny-btn" style="
+                        padding: 12px 24px;
+                        background: #f0f0f0;
+                        color: #666;
+                        border: none;
+                        border-radius: 8px;
+                        cursor: pointer;
+                    ">
+                        Refuser
+                    </button>
+                </div>
+            </div>
+        `;
+
+        document.body.appendChild(modal);
+
+        modal.querySelector('#accept-btn').addEventListener('click', () => {
+            localStorage.setItem(CONFIG.PRIVACY_CONSENT_KEY, 'true');
+            modal.remove();
+            initDetector();
+        });
+
+        modal.querySelector('#deny-btn').addEventListener('click', () => {
+            modal.remove();
+        });
+    }
+
+    // Utilitaires
+    function animateEntry(element) {
+        element.animate([
+            { opacity: 0, transform: 'translateY(20px)' },
+            { opacity: 1, transform: 'translateY(0)' }
+        ], {
+            duration: 300,
+            easing: 'ease-out'
+        });
+    }
+
+    function showFeedback(message) {
+        const feedback = document.createElement('div');
+        feedback.textContent = message;
+        feedback.style.cssText = `
+            position: fixed;
+            bottom: 20px;
+            left: 50%;
+            transform: translateX(-50%);
+            background: rgba(0,0,0,0.8);
+            color: white;
+            padding: 12px 24px;
+            border-radius: 8px;
+            font-size: 14px;
+        `;
+
+        document.body.appendChild(feedback);
+        setTimeout(() => feedback.remove(), 2000);
+    }
+
+    function sanitizeHTML(str) {
+        return str.replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    }
+})();
