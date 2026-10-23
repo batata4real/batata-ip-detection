@@ -1,0 +1,235 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="A simple, consent-based public IP information tool.">
+  <title>BATATA IP Detection</title>
+  <style>
+    :root {
+      color-scheme: light;
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      color: #17202a;
+      background: #f2f5f8;
+    }
+    * { box-sizing: border-box; }
+    body {
+      min-height: 100vh;
+      margin: 0;
+      display: grid;
+      place-items: center;
+      padding: 24px;
+    }
+    .panel {
+      width: min(100%, 460px);
+      background: #fff;
+      border: 1px solid #e1e7ee;
+      border-radius: 18px;
+      box-shadow: 0 14px 40px rgb(20 35 55 / 10%);
+      overflow: hidden;
+    }
+    .header {
+      padding: 22px 24px;
+      background: #102a43;
+      color: #fff;
+    }
+    .header h1 { margin: 0; font-size: 1.25rem; }
+    .header p { margin: 7px 0 0; color: #d9e2ec; font-size: .92rem; }
+    .content { padding: 24px; }
+    .notice {
+      border: 1px solid #f0d58c;
+      background: #fff8df;
+      color: #674d00;
+      border-radius: 12px;
+      padding: 13px 14px;
+      line-height: 1.5;
+      font-size: .9rem;
+      margin-bottom: 18px;
+    }
+    .actions { display: flex; flex-wrap: wrap; gap: 10px; }
+    button {
+      border: 0;
+      border-radius: 10px;
+      padding: 12px 16px;
+      font: inherit;
+      font-weight: 650;
+      cursor: pointer;
+    }
+    button:focus-visible { outline: 3px solid #6bb8ff; outline-offset: 3px; }
+    button:disabled { opacity: .6; cursor: wait; }
+    .primary { background: #087f5b; color: #fff; flex: 1; }
+    .secondary { background: #e9eef4; color: #243b53; }
+    .result {
+      margin-top: 20px;
+      border: 1px solid #e1e7ee;
+      border-radius: 12px;
+      padding: 16px;
+      display: grid;
+      gap: 14px;
+    }
+    .result[hidden], .status[hidden] { display: none; }
+    .field-label { color: #627d98; font-size: .78rem; text-transform: uppercase; letter-spacing: .06em; }
+    .field-value { margin-top: 4px; font-weight: 650; overflow-wrap: anywhere; }
+    .copy { width: 100%; background: #e6fcf5; color: #087f5b; }
+    .status { margin: 14px 0 0; font-size: .92rem; line-height: 1.5; }
+    .status.error { color: #b42318; }
+    .status.success { color: #087f5b; }
+    footer { padding: 0 24px 22px; color: #627d98; font-size: .8rem; line-height: 1.5; }
+    a { color: inherit; }
+    @media (prefers-reduced-motion: no-preference) {
+      .panel { animation: appear .25s ease-out; }
+      @keyframes appear { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
+    }
+  </style>
+</head>
+<body>
+  <main class="panel" aria-labelledby="title">
+    <header class="header">
+      <h1 id="title">🌐 BATATA IP Detection</h1>
+      <p>Check your own public IP address and approximate network location.</p>
+    </header>
+
+    <section class="content">
+      <div class="notice" id="privacy-notice">
+        <strong>Privacy notice:</strong> When you choose to check your IP, this page sends a request to
+        <a href="https://ipapi.co/" target="_blank" rel="noopener noreferrer">ipapi.co</a>.
+        The service receives your connection's IP address and may return approximate location and network-provider details.
+        Your IP is not saved by this page.
+      </div>
+
+      <div class="actions">
+        <button class="primary" id="detect-btn" type="button">I understand — detect my IP</button>
+        <button class="secondary" id="clear-btn" type="button">Clear</button>
+      </div>
+
+      <p class="status" id="status" role="status" aria-live="polite" hidden></p>
+
+      <section class="result" id="result" aria-label="IP information" hidden>
+        <div>
+          <div class="field-label">Public IP address</div>
+          <div class="field-value" id="ip-value">—</div>
+        </div>
+        <div>
+          <div class="field-label">Approximate city / region</div>
+          <div class="field-value" id="location-value">Not available</div>
+        </div>
+        <div>
+          <div class="field-label">Network provider</div>
+          <div class="field-value" id="isp-value">Not available</div>
+        </div>
+        <button class="copy" id="copy-btn" type="button">📋 Copy IP address</button>
+      </section>
+    </section>
+
+    <footer>
+      Location results are estimates based on IP data, not GPS or an exact street address.
+      The tool checks the IP of the connection used to access the API; VPNs and proxies can change the result.
+    </footer>
+  </main>
+
+  <script>
+    "use strict";
+
+    const detectButton = document.querySelector("#detect-btn");
+    const clearButton = document.querySelector("#clear-btn");
+    const copyButton = document.querySelector("#copy-btn");
+    const result = document.querySelector("#result");
+    const status = document.querySelector("#status");
+    const ipValue = document.querySelector("#ip-value");
+    const locationValue = document.querySelector("#location-value");
+    const ispValue = document.querySelector("#isp-value");
+
+    let currentIp = "";
+
+    function setStatus(message, kind = "") {
+      status.textContent = message;
+      status.className = `status ${kind}`.trim();
+      status.hidden = !message;
+    }
+
+    function resetResults() {
+      currentIp = "";
+      ipValue.textContent = "—";
+      locationValue.textContent = "Not available";
+      ispValue.textContent = "Not available";
+      result.hidden = true;
+      setStatus("");
+    }
+
+    async function detectIp() {
+      resetResults();
+      detectButton.disabled = true;
+      detectButton.textContent = "Checking…";
+      setStatus("Contacting ipapi.co…");
+
+      try {
+        const response = await fetch("https://ipapi.co/json/", {
+          method: "GET",
+          headers: { "Accept": "application/json" },
+          cache: "no-store"
+        });
+
+        if (!response.ok) {
+          throw new Error(`The IP service returned HTTP ${response.status}.`);
+        }
+
+        const data = await response.json();
+        if (data.error || typeof data.ip !== "string" || !data.ip.trim()) {
+          throw new Error(data.reason || "The service did not return an IP address.");
+        }
+
+        currentIp = data.ip.trim();
+        ipValue.textContent = currentIp;
+        const city = typeof data.city === "string" ? data.city.trim() : "";
+        const region = typeof data.region === "string" ? data.region.trim() : "";
+        const country = typeof data.country_name === "string" ? data.country_name.trim() : "";
+        locationValue.textContent = [city, region, country].filter(Boolean).join(", ") || "Not available";
+        ispValue.textContent = typeof data.org === "string" && data.org.trim()
+          ? data.org.trim()
+          : "Not available";
+
+        result.hidden = false;
+        setStatus("IP information loaded successfully.", "success");
+      } catch (error) {
+        setStatus(
+          `Could not retrieve IP information. Check your internet connection or try again later. ${error.message}`,
+          "error"
+        );
+      } finally {
+        detectButton.disabled = false;
+        detectButton.textContent = "Check again";
+      }
+    }
+
+    async function copyIp() {
+      if (!currentIp) return;
+      try {
+        await navigator.clipboard.writeText(currentIp);
+        setStatus("IP address copied to clipboard.", "success");
+      } catch {
+        // Clipboard API may be unavailable on insecure origins or unsupported browsers.
+        const temporaryInput = document.createElement("textarea");
+        temporaryInput.value = currentIp;
+        temporaryInput.setAttribute("readonly", "");
+        temporaryInput.style.position = "fixed";
+        temporaryInput.style.opacity = "0";
+        document.body.appendChild(temporaryInput);
+        temporaryInput.select();
+        const copied = document.execCommand("copy");
+        temporaryInput.remove();
+        setStatus(
+          copied ? "IP address copied to clipboard." : "Copy failed. Select and copy the IP address manually.",
+          copied ? "success" : "error"
+        );
+      }
+    }
+
+    detectButton.addEventListener("click", detectIp);
+    clearButton.addEventListener("click", () => {
+      resetResults();
+      detectButton.textContent = "I understand — detect my IP";
+    });
+    copyButton.addEventListener("click", copyIp);
+  </script>
+</body>
+</html>
